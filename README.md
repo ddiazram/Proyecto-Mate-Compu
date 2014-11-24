@@ -7,4 +7,3 @@ Falta por hacer:
 - Reporoduccion Asexual
 - Reproduccion Sexual
 
-Proyecto para Mate-Compu

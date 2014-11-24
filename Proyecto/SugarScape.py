@@ -1,13 +1,19 @@
 
+import numpy as np
+import matplotlib.pyplot as plt
+from random import randint, choice
+
 class Agent_grid:
     """Agent with a specific location in a 51x51 discrete grid.
         id: saves a unique number for each agent
-        tpe: number for graphic purposes.
+        tpe: number for graphic purposes. It is unique for each combination of Male, Female and tribes.
         sex: Male of Female
+        tribe: Int that represents the Agents tribe.
         age: int representing the agents age. It starts from 1 to 10
         max_age: int representing the maximum age the agent can live. 
         existence: boolean type attribute that assures the agent's existence in the world, given the fact that it can
                   die or overlap with other agents.
+        turn_ended: boolean. If True, the agent has already choosed to do something so he can't longer be active          
         position: np.array (1x2) that represents the agent's position in that moment.
         vision: int attribute between 1 and 2, intrinsic characteristic of each agent that allows it to have greater 
                 action field.
@@ -17,16 +23,26 @@ class Agent_grid:
         energy: number which helps the agent decide where to move, due to the fact that the agent can die if its energy runs out.
     """
     
-    def __init__(self, id ,tpe = 2, x = None, y = None, sex = None, age = None, max_age = None, 
-                 metabolism = None, energy = None, vision = None):
+    def __init__(self, id ,tpe = 2, position = None, sex = None, age = None, max_age = None, 
+                 metabolism = None, energy = None, vision = None, tribe = None):
         self.id = id
-        self.tpe = tpe #type
         self.existence = False
+        self.turn_ended = False
+        #Tribe
+        if tribe == None:
+            self.tribe = randint(1,2)
+        else:
+            self.tribe = tribe
         #Sex
         if sex == None:
             self.sex = choice(['M','F'])
         else:
             self.sex = sex
+        #Type
+        if self.sex == 'M':
+            self.tpe = 2*(3**self.tribe)
+        else:
+            self.tpe = (2**2)*(3**self.tribe)
         #Age
         if age == None:
             self.age = randint(1,10)
@@ -44,7 +60,7 @@ class Agent_grid:
             self.metabolism = metabolism
         #Energy    
         if energy == None:
-            self.energy = randint(10,20)
+            self.energy = randint(10,25)
         else:
             self.energy = energy
         #Vision    
@@ -53,17 +69,18 @@ class Agent_grid:
         else:
             self.vision = vision    
         #Position
-        if x == None or y == None:
+        if position == None:
             self.position = np.array([randint(0,50), randint(0,50)])
         else:
-            self.position = np.array([x,y])
-            
+            self.position = np.array(position)
         self.objective = None
         #Dictionary to store information about the things nearby
-        self.vicinity= {'sugar' : [], 
-                         'sugar_id' : [],
-                         'neighbors' : [],
-                         'empty_spaces': []}
+        self.vicinity= {'empty_spaces': [],
+                        'sugar' : [], 
+                        'sugar_id' : [],
+                        'neighbors' : [],        #Positions.
+                        'same_tribe_id' : [],
+                        'other_tribe_id' : []}
                       
     def see(self, world , show = False):
         """
@@ -94,7 +111,7 @@ class Agent_grid:
             print world.grid[x_min : x_max , y_min : y_max]  
         return np.array([x_min,x_max,y_min,y_max])
 
-    def explore(self, world):
+    def explore(self, world, agent_list):
         """
         Goes over the agant's action field, based in its vision range. 
         Identifies and saves in a dictionary each type of element that is near the agent so then the agent can take a decision.
@@ -102,10 +119,12 @@ class Agent_grid:
         vicinity dictionary.
         """
         lim = self.see(world)
-        self.vicinity['neighbors'] = []
+        self.vicinity['empty_spaces'] = []
         self.vicinity['sugar'] = []
         self.vicinity['sugar_id'] = []
-        self.vicinity['empty_spaces'] = []
+        self.vicinity['neighbors'] = []
+        self.vicinity['same_tribe_id'] = [],
+        self.vicinity['other_tribe_id'] = []
         #Clasify the whole vicinity
         for i in xrange(lim[0],lim[1]): #Rows
             for j in xrange(lim[2],lim[3]): #Columns 
@@ -113,7 +132,7 @@ class Agent_grid:
                     self.vicinity['empty_spaces'].append(np.array([i,j]))
                 elif world.grid[i,j] == 1:
                     self.vicinity['sugar'].append(np.array([i,j]))
-                elif world.grid[i,j] == 2: 
+                elif world.grid[i,j] > 2: 
                     self.vicinity['neighbors'].append(np.array([i,j]))
         #Find the sugars ID of the neighbors             
         for close_sugar_pos in self.vicinity['sugar']:
@@ -121,15 +140,40 @@ class Agent_grid:
                 if np.all(close_sugar_pos == sugar.position):
                     self.vicinity['sugar_id'].append(sugar.id)
                     break
-                
-    def decide(self, world): 
+        #Clasify the neighbors and find their Id's
+        for close_neigh_pos in self.vicinity['neigbors']:
+            for agent in agent_list:
+                if np.all(close_neigh_pos == agent.position):
+                    if self.tribe == agent.tribe:
+                        self.vicinity['same_tribe_id'].append(agent.id)
+                        break
+                    else:
+                        self.vicinity['other_tribe_id'].append(agent.id)
+                        break
+            
+    def decide(self, world, agent_list): 
         """
-        Given the fact that the agent already knows its surroundings, it tries to maximize its yield doing a cost benefit analysis.
+        Given the fact that the agent already knows its surroundings, it chooses one out of for options:
+        1. Move
+        2. Reproduce Asexually
+        3. Reproduce Sexually
+        4. Trade
+        """
+        self.explore(world, agent_list)
+        self.turn_ended = False
+        if randint(0,1) == 1:
+            self.asexual_reporoduction(world, agent_list)
+        if self.turn_ended == False:
+            self.benefit_cost_analysis(world)
+            self.move(world)
+            
+    def benefit_cost_analysis(self, world):
+        """
+        The agent tries to maximize its yield doing a cost benefit analysis.
         The agent then moves to the best choice availabe. If there is no best choice, it'll simply move randomly.
         benefit = amount of energy units it'll recive from the sugar. Each sugar gives 1 energy unit.
         cost = amount of energy it'll consume to get to the chosen position given the agent's metabolism.
         """
-        self.explore(world)
         bc =  -10 #Benefit - Cost
         for i in self.vicinity['sugar_id']:
             if self.benefit(world, i) - self.cost(world, i) > bc:
@@ -143,9 +187,8 @@ class Agent_grid:
         Agent's way of moving.
         Two kinds of movement:
         1. If they do not have a desired position, they move randomnly to an empty position.
-        2. If they want to move to an adjacent cell, it moves and consumes the sugar, therefore removing it from existance
+        2. If they want to move to an adjacent cell, it moves and consumes the sugar, therefore removing it from existence
         """
-        self.decide(world) 
         if self.objective == None:
             random_choice = choice(self.vicinity['empty_spaces'])
             self.energy -= self.metabolism * self.calculate_distance(random_choice)
@@ -181,13 +224,28 @@ class Agent_grid:
         2. If an agent runs out of enery
         3. If an agent surpases it's maximum age
         
-        The agent removes itself from existance, both theoricaly and on the world.
+        The agent removes itself from existence, both theoricaly and on the world.
         """
         if 1 == randint(1,1000) or self.energy <= 0 or self.age > self.max_age:
-            self.existence = False
             world.grid[self.position[0],self.position[1]] = 0
+            self.existence = False
             
-    def state(self, world, full_state = False, see_world = False):
+    def asexual_reporoduction(self, world, agent_list):
+        if self.energy >= 75 and len(self.vicinity['empty_spaces']) > 1: #75?
+            x = len(agent_list)
+            clone_position = choice(self.vicinity['empty_spaces'])
+            while np.all(clone_position == self.position): 
+                clone_position = choice(self.vicinity['empty_spaces'])
+            agent_list.append(Agent_grid(id = x, tpe = self.tpe, position = clone_position,
+                                         metabolism = self.metabolism, vision = self.vision, max_age = self.max_age,
+                                         energy = self.energy/2))
+            self.energy = self.energy/2
+            world.grid[agent_list[x].position[0],agent_list[x].position[1]] = agent_list[x].tpe
+            agent_list[x].existence = True
+            self.turn_ended = True
+            
+            
+    def state(self, world, full_state = False, see_world = False, show_existence = False):
         """
         Handy function to review an specific agent and its caracteristics
         full_state: boolean that chooses the amount of information that displays.
@@ -196,7 +254,8 @@ class Agent_grid:
             print "Hello, I'm a type %s agent with ID: %s" % (self.tpe, self.id)
             print "My stats are as follows:" 
             print "\t Sex: %s" % self.sex 
-            print "\t Max_age_ %s" % self.max_age
+            print "\t Max_age: %s" % self.max_age
+            print "\t Tribe: %s" % self.tribe
             print "\t Metabolism: %s" % self.metabolism
             print "\t Vision: %s" % self.vision
             print "My current state is: "
@@ -210,7 +269,9 @@ class Agent_grid:
         if see_world == True:
             print "\t Surroundings: "
             self.see(show = True)
-            
+        if show_existence == True:
+            print "\t Existence: %s" % self.existence
+
 class Sugar:
     """
     Stacks of sugar of variable sizes in a specific location in a discrete grid.
@@ -229,7 +290,7 @@ class Sugar:
         if quantity == None:
             self.quantity = randint(5,20)
         else: 
-            self.quantity = quantity            
+            self.quantity = quantity
 
 class World:
     """
@@ -257,30 +318,33 @@ class World:
             self.define(self.sugars_list)
                             
     
-    def define(self, agent_list):
+    def define(self, agent_list, agent_id = None):
         """
         Gives the agents existence in the world. This means that this method places each agent in the grid (2D NumPy array),
         accordingly to its random location given by its attribute self.position
         When it is placed, we say that the agent "exists" in the world. 
         If that cell is already taken, it looks for a new random location for the agent to exist until it finds an empty cell.
         """
-        
         for agent in agent_list:
             while agent.existence == False:
                 if self.grid[agent.position[0],agent.position[1]] == 0:
                     self.grid[agent.position[0],agent.position[1]] = agent.tpe
                     agent.existence = True
                 else:
-                    agent.position = np.array([randint(0,50), randint(0,50)])  
-            
-    def update_agents(self, agent_list, step):
-        for agent in agent_list:
-            agent.death(self)
-            if agent.existence == True:
-                self.grid[agent.position[0], agent.position[1]] = 0
-                agent.move(self)
-                self.grid[agent.position[0], agent.position[1]] = agent.tpe
-                agent.age += 1
+                    agent.position = np.array([randint(0,50), randint(0,50)])
+                 
+    def update_agents(self, agent_list):
+        """
+        The basic function for animating the world. It can't be done with the quick method because the new agents would move too
+        """
+        n = len(agent_list)
+        for i in xrange(n):
+            agent_list[i].death(self)
+            if agent_list[i].existence == True:
+                self.grid[agent_list[i].position[0], agent_list[i].position[1]] = 0
+                agent_list[i].decide(self, agent_list)
+                self.grid[agent_list[i].position[0], agent_list[i].position[1]] = agent_list[i].tpe
+                agent_list[i].age += 1
         self.step += 1        
             
     def count_agents(self, agent_list):
@@ -291,9 +355,22 @@ class World:
         return count
     
    
-    def update_sugars(self):
-        if self.count_agents(self.sugars_list) <= 50:
+    def update_sugars(self, agent_list):
+        """
+        Since the world is finite and the sugars get consumed each step, there needs to exist a method of sugar regeneration.
+        There are two methods:
+        1. If the sugar population goes down to one fifth of the original, all the sugars get placed again
+        2. Each step, some random sugars, if they meet the requirements, they get regenerated
+        """
+        if self.count_agents(self.sugars_list) <= len(self.sugars_list)/5: #One fifth?
             self.define(self.sugars_list)
+        for i in xrange(len(agent_list)/3): #Third?
+            lucky_sugar = randint(0,len(self.sugars_list))
+            if (self.sugars_list[lucky_sugar].existence == False and 
+                self.grid[self.sugars_list[lucky_sugar].position[0],self.sugars_list[lucky_sugar].position[1]] == 0):
+                    self.grid[self.sugars_list[lucky_sugar].position[0],self.sugars_list[lucky_sugar].position[1]] = 1 
+                    self.sugars_list[lucky_sugar].existence = True
+            
             
     def lorenz(self, agent_list):
         """
@@ -321,7 +398,7 @@ class World:
         0 being the perfect equality
         """
         points = self.lorenz(agent_list)
-        n = len(points[0,:])-1
+        n = len(points[:,1])-1
         gini = (100 + (100 - 2*sum(points[:,1]))/(n + 0.0))
         if plot == False:
             return gini
@@ -354,7 +431,8 @@ class World:
         plt.figure(figsize=(11,10), dpi=80)
         pyplot.pcolor(-numpy.flipud(self.grid))
         plt.axis([0, 51, 0, 51])
-        plt.gray()
-        plt.colorbar() #ELIMINAR es para fines de pruebas
+#         plt.gray()
+#         plt.colorbar() #ELIMINAR es para fines de pruebas
 #         plt.axis('off') #ELIMINAR
-        plt.show()
+        plt.show()            
+            
